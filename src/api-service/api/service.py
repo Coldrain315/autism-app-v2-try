@@ -58,15 +58,6 @@ async def upload_txt(file: UploadFile = File(...)):
 async def load_txt():
     tracker.download_text()
     model.load_text_from_path("/persistent/txt/text.txt")
-    # print("Received file:", "test.txt")
-    # Save the image to a temporary directory
-    # with TemporaryDirectory() as text_dir:
-    #     text_path = os.path.join(text_dir, "test.txt")
-    #     with open(text_path, "wb") as output:
-    #         output.write(await file.read())
-    #     model.load_text_from_path(text_path)
-        # Load and preprocess the image
-        # model.load_preprocess_image(image_path)
     return {"message": "data loaded and preprocessed successfully"}
 # @app.get("/experiments")
 # def experiments_fetch():

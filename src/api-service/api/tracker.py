@@ -9,23 +9,28 @@ import tensorflow as tf
 from google.cloud import storage
 
 
-bucket_name = os.environ["GCS_BUCKET_NAME"]
+bucket_name = os.environ["GCS_BUCKET_DATA"]
+local_txt_path = "/persistent/txt"
 local_experiments_path = "/persistent/experiments"
 
-# Setup experiments folder
+# Setup folder
+if not os.path.exists(local_txt_path):
+    os.mkdir(local_txt_path)
 if not os.path.exists(local_experiments_path):
     os.mkdir(local_experiments_path)
 
 
 def download_blob(bucket_name, source_blob_name, destination_file_name):
     """Downloads a blob from the bucket."""
-
     storage_client = storage.Client()
-
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(source_blob_name)
     blob.download_to_filename(destination_file_name)
 
+def download_text():
+    txt_file = "text_input/text_input.txt"
+    local_txt_file = local_txt_path + "/text.txt"
+    download_blob(bucket_name, txt_file, local_txt_file)
 
 def download_experiment_metrics():
     # Get all model metrics
@@ -145,7 +150,8 @@ class TrackerService:
         while True:
             await asyncio.sleep(60)
             print("Tracking experiments...")
-
+            # Download text input
+            # download_text()
             # Download new model metrics
             timestamp = download_experiment_metrics()
 
