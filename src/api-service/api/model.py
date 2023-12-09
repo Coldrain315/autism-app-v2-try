@@ -11,15 +11,17 @@ from tensorflow.keras.models import model_from_json
 import tensorflow_hub as hub
 from google.cloud import aiplatform
 import base64
-import nltk
-from nltk.corpus import stopwords
-from nltk.tokenize import word_tokenize
-from nltk.stem.wordnet import WordNetLemmatizer
-from nltk.tokenize.toktok import ToktokTokenizer
+from transformers import BertTokenizer
 
-nltk.download('stopwords')
-nltk.download('punkt')
-nltk.download('wordnet')
+# import nltk
+# from nltk.corpus import stopwords
+# from nltk.tokenize import word_tokenize
+# from nltk.stem.wordnet import WordNetLemmatizer
+# from nltk.tokenize.toktok import ToktokTokenizer
+
+# nltk.download('stopwords')
+# nltk.download('punkt')
+# nltk.download('wordnet')
 
 # AUTOTUNE = tf.data.experimental.AUTOTUNE
 local_experiments_path = "/persistent/experiments"
@@ -93,7 +95,9 @@ def load_text_from_path(text_path):
             # Add each line to the list, optionally stripping the newline character
             input_text.append(line.strip())
 
-    processor = TextProcessor()
+    # processor = TextProcessor()
+    processor = BertTextProcessor()
+
     processed_text = processor.process_text(input_text)
     print("processed text: ", processed_text)
 
@@ -133,63 +137,138 @@ def make_prediction(text_path):
 
 
 import emoji
-from nltk.corpus import stopwords
-from nltk.tokenize import word_tokenize
-from nltk.stem.wordnet import WordNetLemmatizer
-from nltk.tokenize.toktok import ToktokTokenizer
+# from nltk.corpus import stopwords
+# from nltk.tokenize import word_tokenize
+# from nltk.stem.wordnet import WordNetLemmatizer
+# from nltk.tokenize.toktok import ToktokTokenizer
 
-
-class TextProcessor:
+class BertTextProcessor:
 
     def __init__(self):
-        self.tokenizer = ToktokTokenizer()
-        self.lemmatizer = WordNetLemmatizer()
-        self.stopword_list = nltk.corpus.stopwords.words('english')
-        custom_stopword = ['[', ']', '[]']
-        self.stopword_list.extend(custom_stopword)
+        # Initialize BERT tokenizer
+        self.tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
 
-    def to_lower_case(self, text):
-        return text.lower()
-
-    def remove_stopwords(self, text, is_lower_case=False):
-        tokens = self.tokenizer.tokenize(text)
-        tokens = [token.strip() for token in tokens]
-        if is_lower_case:
-            filtered_tokens = [token for token in tokens if token not in self.stopword_list]
-        else:
-            filtered_tokens = [token for token in tokens if token.lower() not in self.stopword_list]
-        return ' '.join(filtered_tokens)
-
-    def remove_special_characters(self, text, remove_digits=True):
-        pattern = r'[^a-zA-z0-9\s]'
+    def remove_special_characters(self, text):
+        pattern = r'[^a-zA-Z0-9\s]'
         return re.sub(pattern, '', text)
 
     def remove_between_square_brackets(self, text):
         return re.sub('\[[^]]*\]', '', text)
 
-    def lemmatize_sentence(self, sentence):
-        word_list = word_tokenize(sentence)
-        return ' '.join([self.lemmatizer.lemmatize(w) for w in word_list])
-
     def remove_emoji(self, text):
         return emoji.demojize(text)
 
-    def remove_tags(self, text):
-        hashtag_regex = r'#\S+'
-        cleaned_text = re.sub(hashtag_regex, '', text)
-        return cleaned_text.strip()
+    def bert_tokenize(self, text):
+        # Tokenize and encode sequences in the input text
+        encoded_dict = self.tokenizer.encode_plus(
+            text,
+            add_special_tokens = True,  # Add '[CLS]' and '[SEP]'
+            max_length = 144,           # Pad & truncate all sentences.
+            truncation=True,
+            pad_to_max_length = True,
+            return_attention_mask = True,   # Construct attention masks
+            return_tensors = 'pt',     # Return pytorch tensors
+        )
+        return encoded_dict
 
+    def process_dataframe(self, df, text_column):
+        # Preprocess and store in a new column
+        df['simple_processed_text'] = (df[text_column]
+                                      #  .apply(self.to_lower_case)
+                                       .apply(self.remove_special_characters)
+                                       .apply(self.remove_between_square_brackets)
+                                       .apply(self.remove_emoji))
+
+        # BERT tokenization for model input
+        df['input_ids'] = df['simple_processed_text'].apply(lambda x: self.bert_tokenize(x)['input_ids'].numpy()[0])
+        df['attention_mask'] = df['simple_processed_text'].apply(lambda x: self.bert_tokenize(x)['attention_mask'].numpy()[0])
+        return df
+        
+    def process_dataframe(self, df, text_column):
+        # Preprocess and store in a new column
+        df['simple_processed_text'] = (df[text_column]
+                                      #  .apply(self.to_lower_case)
+                                       .apply(self.remove_special_characters)
+                                       .apply(self.remove_between_square_brackets)
+                                       .apply(self.remove_emoji))
+
+        # BERT tokenization for model input
+        df['input_ids'] = df['simple_processed_text'].apply(lambda x: self.bert_tokenize(x)['input_ids'].numpy()[0])
+        df['attention_mask'] = df['simple_processed_text'].apply(lambda x: self.bert_tokenize(x)['attention_mask'].numpy()[0])
+        return df
+        
     def process_text(self, text_list):
-        print(text_list)
-        processed = [self.to_lower_case(i) for i in text_list]
-        processed = [self.remove_tags(i) for i in processed]
-        processed = [self.remove_stopwords(i) for i in processed]
-        processed = [self.remove_special_characters(i) for i in processed]
-        processed = [self.remove_between_square_brackets(i) for i in processed]
-        processed = [self.lemmatize_sentence(i) for i in processed]
-        processed = [self.remove_emoji(i) for i in processed]
-        processed = [i for i in processed if i != ""]
-        print(processed)
+        input_ids_list = []
+        attention_masks_list = []
+        # Process and tokenize each text in the list
+        for text in text_list:
+            # Apply preprocessing steps
+            processed_text = self.remove_special_characters(text)
+            processed_text = self.remove_between_square_brackets(processed_text)
+            processed_text = self.remove_emoji(processed_text)
+            # Tokenize
+            encoded_dict = self.bert_tokenize(processed_text)
+            # Extract and store the tokenized values
+            input_ids_list.append(encoded_dict['input_ids'].numpy()[0])
+            attention_masks_list.append(encoded_dict['attention_mask'].numpy()[0])
+
+        # Convert lists to numpy arrays for compatibility with many ML frameworks
+        input_ids_array = np.array(input_ids_list)
+        attention_masks_array = np.array(attention_masks_list)
+
+        return input_ids_array, attention_masks_array
+
+# class TextProcessor:
+
+#     def __init__(self):
+#         self.tokenizer = ToktokTokenizer()
+#         self.lemmatizer = WordNetLemmatizer()
+#         self.stopword_list = nltk.corpus.stopwords.words('english')
+#         custom_stopword = ['[', ']', '[]']
+#         self.stopword_list.extend(custom_stopword)
+
+#     def to_lower_case(self, text):
+#         return text.lower()
+
+#     def remove_stopwords(self, text, is_lower_case=False):
+#         tokens = self.tokenizer.tokenize(text)
+#         tokens = [token.strip() for token in tokens]
+#         if is_lower_case:
+#             filtered_tokens = [token for token in tokens if token not in self.stopword_list]
+#         else:
+#             filtered_tokens = [token for token in tokens if token.lower() not in self.stopword_list]
+#         return ' '.join(filtered_tokens)
+
+#     def remove_special_characters(self, text, remove_digits=True):
+#         pattern = r'[^a-zA-z0-9\s]'
+#         return re.sub(pattern, '', text)
+
+#     def remove_between_square_brackets(self, text):
+#         return re.sub('\[[^]]*\]', '', text)
+
+#     def lemmatize_sentence(self, sentence):
+#         word_list = word_tokenize(sentence)
+#         return ' '.join([self.lemmatizer.lemmatize(w) for w in word_list])
+
+#     def remove_emoji(self, text):
+#         return emoji.demojize(text)
+
+#     def remove_tags(self, text):
+#         hashtag_regex = r'#\S+'
+#         cleaned_text = re.sub(hashtag_regex, '', text)
+#         return cleaned_text.strip()
+
+#     def process_text(self, text_list):
+#         print(text_list)
+#         processed = [self.to_lower_case(i) for i in text_list]
+#         processed = [self.remove_tags(i) for i in processed]
+#         processed = [self.remove_stopwords(i) for i in processed]
+#         processed = [self.remove_special_characters(i) for i in processed]
+#         processed = [self.remove_between_square_brackets(i) for i in processed]
+#         processed = [self.lemmatize_sentence(i) for i in processed]
+#         processed = [self.remove_emoji(i) for i in processed]
+#         processed = [i for i in processed if i != ""]
+#         print(processed)
 
 # Tensorflow
 # import tensorflow as tf
